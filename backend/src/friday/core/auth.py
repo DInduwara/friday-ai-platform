@@ -11,7 +11,7 @@ from jose.exceptions import JWTError
 from friday.core.config import settings
 
 _JWKS_CACHE: dict[str, Any] = {"jwks": None, "fetched_at": 0.0}
-_JWKS_TTL_SECONDS = 60.0  # cache JWKS for 60s
+_JWKS_TTL_SECONDS = 60.0
 
 
 def _get_bearer_token(request: Request) -> str:
@@ -48,9 +48,6 @@ async def _fetch_jwks() -> dict[str, Any]:
 
 
 async def get_current_user_id(request: Request) -> str:
-    """
-    Validates Clerk session JWT and returns user_id (JWT 'sub').
-    """
     if not settings.CLERK_ISSUER:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -61,8 +58,6 @@ async def get_current_user_id(request: Request) -> str:
     jwks = await _fetch_jwks()
 
     try:
-        # Clerk tokens: verify signature + issuer + expiry.
-        # Audience varies by setup; keep aud verification off for dev simplicity.
         payload = jwt.decode(
             token,
             jwks,
@@ -76,7 +71,6 @@ async def get_current_user_id(request: Request) -> str:
     user_id = payload.get("sub")
     if not user_id or not isinstance(user_id, str):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing user identity")
-
     return user_id
 
 

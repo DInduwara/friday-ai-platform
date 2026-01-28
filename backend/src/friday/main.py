@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import OperationalError
 
 from friday.api import chat_router, health_router, conversations_router
 from friday.core.config import settings
 from friday.core.errors import FridayError, friday_error_handler
 from friday.core.logging import configure_logging
-
 from friday.db.session import engine
 from friday.db.models import Base
+
+log = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -27,14 +32,31 @@ def create_app() -> FastAPI:
     )
 
     @app.on_event("startup")
-    async def _startup():
-        if settings.DB_AUTO_CREATE:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
+    async def startup_db():
+        if not settings.DB_AUTO_CREATE:
+            return
+
+        retries = 10
+        delay = 2
+
+        for attempt in range(1, retries + 1):
+            try:
+                log.info("Connecting to database (attempt %s/%s)...", attempt, retries)
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                log.info("Database ready ")
+                return
+            except OperationalError as e:
+                log.warning("Database not ready yet: %s", e)
+                if attempt == retries:
+                    log.error("Database failed to start after retries ")
+                    raise
+                await asyncio.sleep(delay)
 
     app.include_router(health_router)
     app.include_router(chat_router)
     app.include_router(conversations_router)
+
     return app
 
 
