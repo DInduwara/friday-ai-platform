@@ -3,12 +3,27 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: friday
+      POSTGRES_PASSWORD: friday
+      POSTGRES_DB: friday
+    ports:
+      - "5432:5432"
+    volumes:
+      - friday_pgdata:/var/lib/postgresql/data
+
   backend:
     build: ./backend
     ports:
       - "8000:8000"
     env_file:
       - ./backend/.env
+    depends_on:
+      - redis
+      - postgres
 
   frontend:
     image: node:20-alpine
@@ -20,3 +35,7 @@ services:
       - "5173:5173"
     environment:
       - VITE_API_BASE=http://localhost:8000
+      - VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+
+volumes:
+  friday_pgdata:

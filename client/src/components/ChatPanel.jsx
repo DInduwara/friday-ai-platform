@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@clerk/clerk-react";
 import MessageBubble from "./MessageBubble";
 
 function newConversationId() {
@@ -7,6 +8,7 @@ function newConversationId() {
 
 export default function ChatPanel({ setAgentSteps }) {
   const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+  const { getToken } = useAuth();
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -24,7 +26,6 @@ export default function ChatPanel({ setAgentSteps }) {
     localStorage.setItem("friday_conversation_id", conversationId);
   }, [conversationId]);
 
-  // ✅ auto-scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
@@ -35,9 +36,13 @@ export default function ChatPanel({ setAgentSteps }) {
 
   const clearServerConversation = async (id) => {
     try {
+      const token = await getToken();
       await fetch(`${API_BASE}/api/v1/chat/clear`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ conversation_id: id }),
       });
     } catch (e) {
@@ -73,16 +78,18 @@ export default function ChatPanel({ setAgentSteps }) {
     const userInput = input.trim();
     setInput("");
 
-    // ✅ user message timestamp
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: userInput, timestamp: Date.now() },
-    ]);
+    setMessages((prev) => [...prev, { role: "user", content: userInput, timestamp: Date.now() }]);
 
     try {
+      const token = await getToken();
+      if (!token) throw new Error("No auth token. Please sign in again.");
+
       const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           prompt: userInput,
           conversation_id: conversationId,
@@ -137,11 +144,7 @@ export default function ChatPanel({ setAgentSteps }) {
       }
 
       if (aiReply) {
-        // ✅ ai message timestamp (this was missing)
-        setMessages((prev) => [
-          ...prev,
-          { role: "ai", content: aiReply, timestamp: Date.now() },
-        ]);
+        setMessages((prev) => [...prev, { role: "ai", content: aiReply, timestamp: Date.now() }]);
       }
     } catch (err) {
       console.error("Chat error:", err);
@@ -150,7 +153,7 @@ export default function ChatPanel({ setAgentSteps }) {
         ...prev,
         {
           role: "ai",
-          content: "⚠️ Failed to contact backend. Check Docker logs and API URL.",
+          content: "⚠️ Failed to contact backend or auth failed. Check logs + Clerk setup.",
           timestamp: Date.now(),
         },
       ]);
@@ -161,7 +164,6 @@ export default function ChatPanel({ setAgentSteps }) {
 
   return (
     <div className="flex flex-col h-full border-r border-gray-800 bg-gradient-to-br from-indigo-900 via-purple-900 to-blue-900">
-      {/* Header */}
       <div className="bg-gradient-to-r from-indigo-800 to-purple-800 text-white p-4 shadow-md">
         <div className="flex items-center justify-between gap-3">
           <div className="text-center flex-1">
@@ -173,7 +175,6 @@ export default function ChatPanel({ setAgentSteps }) {
             <button
               className="px-3 py-2 text-sm rounded-lg bg-white/10 hover:bg-white/15 border border-white/15"
               onClick={handleClearServer}
-              title="Clear UI + clear server memory for this conversation"
               disabled={isSending}
             >
               Clear
@@ -181,7 +182,6 @@ export default function ChatPanel({ setAgentSteps }) {
             <button
               className="px-3 py-2 text-sm rounded-lg bg-white/10 hover:bg-white/15 border border-white/15"
               onClick={handleNewChat}
-              title="Start a new conversation (new conversation_id)"
               disabled={isSending}
             >
               New Chat
@@ -196,7 +196,6 @@ export default function ChatPanel({ setAgentSteps }) {
         ) : null}
       </div>
 
-      {/* Scrollable messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg, idx) => (
           <MessageBubble key={idx} message={msg} />
@@ -204,7 +203,6 @@ export default function ChatPanel({ setAgentSteps }) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
       <div className="flex p-3 bg-gray-900/70 backdrop-blur-lg border-t border-gray-700">
         <input
           className="flex-1 p-2 rounded-lg bg-gray-800/80 text-white placeholder-gray-400 outline-none disabled:opacity-60"
