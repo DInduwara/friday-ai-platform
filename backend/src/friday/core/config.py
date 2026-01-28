@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     MEMORY_BACKEND: str = "redis"  # "redis" | "in_memory"
     MEMORY_MAX_MESSAGES: int = 50
 
+    # Clerk Auth
+    CLERK_ISSUER: str | None = None
+    CLERK_JWKS_URL: str | None = None
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [x.strip() for x in self.ALLOWED_ORIGINS.split(",") if x.strip()]
