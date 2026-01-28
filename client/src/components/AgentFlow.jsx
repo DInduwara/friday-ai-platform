@@ -1,10 +1,21 @@
-import { FaRobot, FaUser, FaCheckCircle } from "react-icons/fa";
+import { FaRobot, FaRoute, FaTools, FaBrain, FaDatabase, FaExclamationTriangle } from "react-icons/fa";
 
-const iconMap = {
-  ai: <FaRobot className="text-purple-400 w-5 h-5" />,
-  user: <FaUser className="text-blue-400 w-5 h-5" />,
-  supervisor: <FaCheckCircle className="text-green-400 w-6 h-6" />,
+const kindIcon = {
+  route: <FaRoute className="text-blue-300 w-5 h-5" />,
+  tool: <FaTools className="text-green-300 w-5 h-5" />,
+  agent: <FaBrain className="text-purple-300 w-5 h-5" />,
+  memory: <FaDatabase className="text-yellow-300 w-5 h-5" />,
+  error: <FaExclamationTriangle className="text-red-300 w-5 h-5" />,
+  final: <FaRobot className="text-indigo-300 w-5 h-5" />,
 };
+
+function prettyData(data) {
+  try {
+    return JSON.stringify(data, null, 2);
+  } catch {
+    return String(data);
+  }
+}
 
 export default function AgentFlow({ steps }) {
   return (
@@ -13,27 +24,35 @@ export default function AgentFlow({ steps }) {
         Agent Flow
       </h2>
 
-      {steps.length === 0 ? (
+      {(!steps || steps.length === 0) ? (
         <p className="text-gray-400 italic text-center">Waiting for agent steps...</p>
       ) : (
-        <div className="space-y-4">
-          {steps.map((step, idx) => (
-            <div
-              key={idx}
-              className="flex items-start p-4 rounded-xl bg-gradient-to-r from-gray-800 to-gray-900 shadow-lg border border-gray-700 hover:scale-105 transition-transform"
-            >
-              {/* Icon */}
-              <div className="mr-3">
-                {iconMap[step.type?.toLowerCase()] || <FaRobot className="w-5 h-5 text-gray-400" />}
-              </div>
+        <div className="space-y-3">
+          {steps.map((step, idx) => {
+            const kind = step?.kind || "unknown";
+            const data = step?.data ?? {};
+            return (
+              <div
+                key={idx}
+                className="flex items-start gap-3 p-4 rounded-xl bg-gradient-to-r from-gray-800 to-gray-900 shadow-lg border border-gray-700"
+              >
+                <div className="mt-1">
+                  {kindIcon[kind] || <FaRobot className="w-5 h-5 text-gray-400" />}
+                </div>
 
-              {/* Step content */}
-              <div>
-                <strong className="block text-blue-400 text-lg mb-1">{step.type}</strong>
-                <p className="text-gray-200">{step.content}</p>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <strong className="text-blue-300 text-base">{kind}</strong>
+                    <span className="text-xs text-gray-400">#{idx + 1}</span>
+                  </div>
+
+                  <pre className="mt-2 text-xs text-gray-200 bg-black/30 border border-white/5 rounded-lg p-3 overflow-auto">
+                    {prettyData(data)}
+                  </pre>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
