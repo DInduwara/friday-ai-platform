@@ -17,7 +17,14 @@ class Settings(BaseSettings):
 
     FULL_AI_TRACE: bool = False
 
+    # LLM
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
+
+    # Redis conversation memory
+    REDIS_URL: str = "redis://localhost:6379/0"
+    MEMORY_TTL_SECONDS: int = 86400
+    MEMORY_BACKEND: str = "redis"  # "redis" | "in_memory"
+    MEMORY_MAX_MESSAGES: int = 50
 
     @property
     def allowed_origins_list(self) -> list[str]:
