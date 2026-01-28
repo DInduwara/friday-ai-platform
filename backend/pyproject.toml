@@ -11,6 +11,10 @@ dependencies = [
   "redis>=5.0",
   "requests>=2.32",
   "python-jose[cryptography]>=3.3.0",
+
+  # DB
+  "sqlalchemy>=2.0.30",
+  "asyncpg>=0.29.0",
 ]
 
 [project.optional-dependencies]
