@@ -1,3 +1,31 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Fancy modern dark background */
+.friday-bg {
+  background:
+    radial-gradient(1200px 600px at 20% 15%, rgba(124, 58, 237, 0.35), transparent 55%),
+    radial-gradient(900px 500px at 80% 25%, rgba(59, 130, 246, 0.25), transparent 55%),
+    radial-gradient(900px 700px at 50% 95%, rgba(16, 185, 129, 0.10), transparent 60%),
+    linear-gradient(180deg, #060714 0%, #050611 40%, #040510 100%);
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+/* Nicer scrollbar */
+*::-webkit-scrollbar {
+  width: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}

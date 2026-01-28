@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Generator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -29,7 +29,10 @@ class ChatResponse(BaseModel):
 async def chat(req: ChatRequest, user_id: str = Depends(require_user)) -> ChatResponse:
     async with SessionLocal() as session:
         await repo.ensure_user(session, user_id)
-        await repo.add_message(session, user_id, req.conversation_id, role="user", content=req.prompt)
+        try:
+            await repo.add_message(session, user_id, req.conversation_id, role="user", content=req.prompt)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Conversation not found")
 
     final = ""
     for item in supervisor.stream(req.prompt, req.conversation_id):
@@ -49,17 +52,18 @@ async def chat(req: ChatRequest, user_id: str = Depends(require_user)) -> ChatRe
 
 @router.post("/stream")
 async def chat_stream(req: ChatRequest, user_id: str = Depends(require_user)):
-    # Persist user message before streaming
+    # Persist user message before streaming (this triggers auto-rename if first msg)
     async with SessionLocal() as session:
         await repo.ensure_user(session, user_id)
-        await repo.add_message(session, user_id, req.conversation_id, role="user", content=req.prompt)
+        try:
+            await repo.add_message(session, user_id, req.conversation_id, role="user", content=req.prompt)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # We will capture final response and persist after stream ends (best-effort)
     final_holder = {"final": ""}
 
     def gen() -> Generator[bytes, None, None]:
         for item in supervisor.stream(req.prompt, req.conversation_id):
-            # capture final text for DB
             if item.get("done"):
                 resp = item.get("response") or {}
                 if resp.get("kind") == "final":
@@ -74,8 +78,6 @@ async def chat_stream(req: ChatRequest, user_id: str = Depends(require_user)):
             await repo.ensure_user(session, user_id)
             await repo.add_message(session, user_id, req.conversation_id, role="assistant", content=final)
 
-    # FastAPI doesn't provide a native "on close" hook for StreamingResponse.
-    # In practice, response completes normally; we save after generator runs.
     async def streaming():
         for chunk in gen():
             yield chunk

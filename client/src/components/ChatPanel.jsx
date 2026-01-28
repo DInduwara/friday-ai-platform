@@ -1,72 +1,107 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/clerk-react";
 import MessageBubble from "./MessageBubble";
 
-function newConversationId() {
-  return `c_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
+const PAGE_SIZE = 30;
 
-export default function ChatPanel({ setAgentSteps }) {
+export default function ChatPanel({
+  conversationId,
+  setAgentSteps,
+  onNeedRefreshSidebar,
+  onConversationCreated,
+}) {
   const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
   const { getToken } = useAuth();
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-
-  const [conversationId, setConversationId] = useState(() => {
-    return localStorage.getItem("friday_conversation_id") || newConversationId();
-  });
-
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState("");
 
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+
   const bottomRef = useRef(null);
+  const scrollToBottom = () => bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 
-  useEffect(() => {
-    localStorage.setItem("friday_conversation_id", conversationId);
-  }, [conversationId]);
+  const hasMore = messages.length < total;
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  const mapApiItemsToUi = (items) => {
+    // API returns newest-first. UI should show oldest-first.
+    const mapped = (items || []).map((m) => ({
+      role: m.role === "assistant" ? "ai" : "user",
+      content: m.content,
+      timestamp: Date.parse(m.created_at) || Date.now(),
+    }));
+    return mapped.reverse();
+  };
 
-  const headerSubtitle = useMemo(() => {
-    return conversationId ? `Session: ${conversationId}` : "";
-  }, [conversationId]);
+  const loadPage = async ({ reset = false, nextOffset = 0 } = {}) => {
+    setError("");
+    if (!conversationId) {
+      setMessages([]);
+      setTotal(0);
+      setOffset(0);
+      return;
+    }
 
-  const clearServerConversation = async (id) => {
     try {
       const token = await getToken();
-      await fetch(`${API_BASE}/api/v1/chat/clear`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ conversation_id: id }),
-      });
+      const params = new URLSearchParams();
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(nextOffset));
+
+      const res = await fetch(
+        `${API_BASE}/api/v1/conversations/${conversationId}/messages?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const data = await res.json();
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const uiPage = mapApiItemsToUi(items);
+
+      setTotal(Number(data?.total || 0));
+      setOffset(nextOffset);
+
+      if (reset) {
+        setMessages(uiPage);
+        setTimeout(scrollToBottom, 60);
+      } else {
+        // Loading older => prepend
+        setMessages((prev) => [...uiPage, ...prev]);
+      }
     } catch (e) {
-      console.warn("Failed to clear server conversation:", e);
+      console.error(e);
+      setError("Failed to load messages.");
     }
   };
 
-  const handleNewChat = async () => {
-    const oldId = conversationId;
-    const newId = newConversationId();
-
-    await clearServerConversation(oldId);
-
-    setConversationId(newId);
+  useEffect(() => {
     setMessages([]);
     setAgentSteps([]);
-    setError("");
-  };
+    setTotal(0);
+    setOffset(0);
+    loadPage({ reset: true, nextOffset: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
 
-  const handleClearServer = async () => {
-    await clearServerConversation(conversationId);
-    setMessages([]);
-    setAgentSteps([]);
-    setError("");
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages.length]);
+
+  const createConversation = async () => {
+    const token = await getToken();
+    const res = await fetch(`${API_BASE}/api/v1/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "New chat" }),
+    });
+    const c = await res.json();
+    if (c?.id) {
+      onConversationCreated?.(c.id);
+      return c.id;
+    }
+    throw new Error("Failed to create conversation");
   };
 
   const sendMessage = async () => {
@@ -75,25 +110,33 @@ export default function ChatPanel({ setAgentSteps }) {
     setError("");
     setIsSending(true);
 
-    const userInput = input.trim();
+    let cid = conversationId;
+
+    try {
+      if (!cid) cid = await createConversation();
+    } catch {
+      setError("Could not create a new conversation.");
+      setIsSending(false);
+      return;
+    }
+
+
+    const userText = input.trim();
     setInput("");
 
-    setMessages((prev) => [...prev, { role: "user", content: userInput, timestamp: Date.now() }]);
+    const typingId = `typing_${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: userText, timestamp: Date.now() },
+      { role: "ai", content: "", timestamp: Date.now(), _typing: true, _id: typingId },
+    ]);
 
     try {
       const token = await getToken();
-      if (!token) throw new Error("No auth token. Please sign in again.");
-
       const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          prompt: userInput,
-          conversation_id: conversationId,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ prompt: userText, conversation_id: cid }),
       });
 
       if (!res.ok) {
@@ -106,14 +149,13 @@ export default function ChatPanel({ setAgentSteps }) {
       const decoder = new TextDecoder("utf-8");
 
       let buffer = "";
-      let aiReply = "";
+      let finalText = "";
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-
         const parts = buffer.split("\n\n");
         buffer = parts.pop() || "";
 
@@ -122,20 +164,17 @@ export default function ChatPanel({ setAgentSteps }) {
           if (!line.startsWith("data:")) continue;
 
           const jsonStr = line.replace(/^data:\s?/, "");
-
           try {
             const parsed = JSON.parse(jsonStr);
 
-            if (Array.isArray(parsed?.step)) {
-              setAgentSteps(parsed.step);
-            }
+            if (Array.isArray(parsed?.step)) setAgentSteps(parsed.step);
 
             if (parsed?.response?.kind === "final") {
-              aiReply = parsed?.response?.data?.content || "";
+              finalText = parsed?.response?.data?.content || "";
             }
 
             if (parsed?.response?.kind === "error") {
-              aiReply = parsed?.response?.data?.message || "Something went wrong.";
+              finalText = parsed?.response?.data?.message || "Something went wrong.";
             }
           } catch (err) {
             console.error("Bad SSE JSON:", err, jsonStr);
@@ -143,82 +182,78 @@ export default function ChatPanel({ setAgentSteps }) {
         }
       }
 
-      if (aiReply) {
-        setMessages((prev) => [...prev, { role: "ai", content: aiReply, timestamp: Date.now() }]);
-      }
-    } catch (err) {
-      console.error("Chat error:", err);
-      setError(err?.message || "Chat error");
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "ai",
-          content: "⚠️ Failed to contact backend or auth failed. Check logs + Clerk setup.",
-          timestamp: Date.now(),
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m._id === typingId ? { role: "ai", content: finalText, timestamp: Date.now() } : m
+        )
+      );
+
+      // IMPORTANT: refresh sidebar so auto-title appears
+      onNeedRefreshSidebar?.();
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Chat error");
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m._id === typingId
+            ? { role: "ai", content: "⚠️ Failed to contact backend.", timestamp: Date.now() }
+            : m
+        )
+      );
     } finally {
       setIsSending(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-full border-r border-gray-800 bg-gradient-to-br from-indigo-900 via-purple-900 to-blue-900">
-      <div className="bg-gradient-to-r from-indigo-800 to-purple-800 text-white p-4 shadow-md">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-center flex-1">
-            <div className="font-bold text-lg">F.R.I.D.A.Y</div>
-            <div className="text-xs text-indigo-200/90 mt-1 truncate">{headerSubtitle}</div>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              className="px-3 py-2 text-sm rounded-lg bg-white/10 hover:bg-white/15 border border-white/15"
-              onClick={handleClearServer}
-              disabled={isSending}
-            >
-              Clear
-            </button>
-            <button
-              className="px-3 py-2 text-sm rounded-lg bg-white/10 hover:bg-white/15 border border-white/15"
-              onClick={handleNewChat}
-              disabled={isSending}
-            >
-              New Chat
-            </button>
-          </div>
+    <div className="h-full flex flex-col min-w-0">
+      <div className="px-4 py-3 border-b border-white/10 bg-black/20 backdrop-blur-xl">
+        <div className="text-sm text-white/75">
+          {conversationId ? "Conversation" : "Select a chat or click New"}
         </div>
-
         {error ? (
-          <div className="mt-2 text-xs text-red-200 bg-red-900/30 border border-red-500/20 rounded-lg px-3 py-2">
+          <div className="mt-2 text-xs text-red-200 bg-red-900/30 border border-red-500/20 rounded-xl px-3 py-2">
             {error}
           </div>
         ) : null}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-3">
+        {conversationId && hasMore ? (
+          <button
+            className="mx-auto block text-xs px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10"
+            onClick={() => loadPage({ reset: false, nextOffset: offset + PAGE_SIZE })}
+          >
+            Load older messages
+          </button>
+        ) : null}
+
         {messages.map((msg, idx) => (
           <MessageBubble key={idx} message={msg} />
         ))}
         <div ref={bottomRef} />
       </div>
 
-      <div className="flex p-3 bg-gray-900/70 backdrop-blur-lg border-t border-gray-700">
-        <input
-          className="flex-1 p-2 rounded-lg bg-gray-800/80 text-white placeholder-gray-400 outline-none disabled:opacity-60"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-          placeholder={isSending ? "Waiting for response..." : "Type a message..."}
-          disabled={isSending}
-        />
-        <button
-          className="ml-3 px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-700 text-white rounded-lg shadow-md hover:scale-105 transition-transform disabled:opacity-60 disabled:hover:scale-100"
-          onClick={sendMessage}
-          disabled={isSending}
-        >
-          {isSending ? "Sending..." : "Send"}
-        </button>
+      <div className="p-4 border-t border-white/10 bg-black/25 backdrop-blur-xl">
+        <div className="flex gap-3">
+          <input
+            className="flex-1 px-4 py-3 rounded-2xl bg-black/35 border border-white/10 outline-none
+                       placeholder:text-white/35 focus:border-white/20"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+            placeholder={isSending ? "Waiting for response..." : "Type a message..."}
+            disabled={isSending}
+          />
+          <button
+            className="px-5 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 disabled:opacity-60"
+            onClick={sendMessage}
+            disabled={isSending}
+          >
+            {isSending ? "Sending…" : "Send"}
+          </button>
+        </div>
       </div>
     </div>
   );
