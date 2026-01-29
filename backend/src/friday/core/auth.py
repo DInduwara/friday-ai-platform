@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import Depends, HTTPException, Request, status
@@ -26,11 +26,11 @@ def _get_bearer_token(request: Request) -> str:
     return token
 
 
-async def _fetch_jwks() -> dict[str, Any]:
+async def _fetch_jwks() -> Dict[str, Any]:
     if not settings.CLERK_JWKS_URL:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server not configured: FRIDAY_CLERK_JWKS_URL missing",
+            detail="Server not configured: CLERK_JWKS_URL missing",
         )
 
     now = time.time()
@@ -47,23 +47,47 @@ async def _fetch_jwks() -> dict[str, Any]:
     return jwks
 
 
+def _find_jwk_by_kid(jwks: Dict[str, Any], kid: str) -> Optional[Dict[str, Any]]:
+    keys = jwks.get("keys") or []
+    for k in keys:
+        if k.get("kid") == kid:
+            return k
+    return None
+
+
 async def get_current_user_id(request: Request) -> str:
     if not settings.CLERK_ISSUER:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server not configured: FRIDAY_CLERK_ISSUER missing",
+            detail="Server not configured: CLERK_ISSUER missing",
         )
 
     token = _get_bearer_token(request)
-    jwks = await _fetch_jwks()
 
+    # 1) Read token header to get kid
+    try:
+        header = jwt.get_unverified_header(token)
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token header")
+
+    kid = header.get("kid")
+    if not kid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing kid")
+
+    # 2) Fetch JWKS and pick the correct key
+    jwks = await _fetch_jwks()
+    jwk = _find_jwk_by_kid(jwks, kid)
+    if not jwk:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown signing key (kid)")
+
+    # 3) Verify JWT using that key
     try:
         payload = jwt.decode(
             token,
-            jwks,
+            jwk,  #  single JWK, not the entire jwks
             algorithms=["RS256"],
             issuer=settings.CLERK_ISSUER,
-            options={"verify_aud": False},
+            options={"verify_aud": False},  # ok for many Clerk setups
         )
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
@@ -71,6 +95,7 @@ async def get_current_user_id(request: Request) -> str:
     user_id = payload.get("sub")
     if not user_id or not isinstance(user_id, str):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing user identity")
+
     return user_id
 
 
