@@ -4,29 +4,21 @@ import time
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from jose.exceptions import JWTError
 
 from friday.core.config import settings
 
+bearer_scheme = HTTPBearer(auto_error=False)
+
 _JWKS_CACHE: dict[str, Any] = {"jwks": None, "fetched_at": 0.0}
 _JWKS_TTL_SECONDS = 60.0
 
 
-def _get_bearer_token(request: Request) -> str:
-    auth = request.headers.get("authorization") or request.headers.get("Authorization")
-    if not auth:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
-    if not auth.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Authorization scheme")
-    token = auth.split(" ", 1)[1].strip()
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Empty bearer token")
-    return token
-
-
 async def _fetch_jwks() -> Dict[str, Any]:
+    # NOTE: match your settings key name exactly
     if not settings.CLERK_JWKS_URL:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -55,14 +47,20 @@ def _find_jwk_by_kid(jwks: Dict[str, Any], kid: str) -> Optional[Dict[str, Any]]
     return None
 
 
-async def get_current_user_id(request: Request) -> str:
+async def get_current_user_id(
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> str:
     if not settings.CLERK_ISSUER:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Server not configured: CLERK_ISSUER missing",
         )
 
-    token = _get_bearer_token(request)
+    # ✅ This is what makes Swagger work (Authorize button + Bearer injection)
+    if not creds or creds.scheme.lower() != "bearer" or not creds.credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
+
+    token = creds.credentials
 
     # 1) Read token header to get kid
     try:
@@ -74,20 +72,20 @@ async def get_current_user_id(request: Request) -> str:
     if not kid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing kid")
 
-    # 2) Fetch JWKS and pick the correct key
+    # 2) Fetch JWKS and pick correct key
     jwks = await _fetch_jwks()
     jwk = _find_jwk_by_kid(jwks, kid)
     if not jwk:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown signing key (kid)")
 
-    # 3) Verify JWT using that key
+    # 3) Verify JWT
     try:
         payload = jwt.decode(
             token,
-            jwk,  #  single JWK, not the entire jwks
+            jwk,
             algorithms=["RS256"],
             issuer=settings.CLERK_ISSUER,
-            options={"verify_aud": False},  # ok for many Clerk setups
+            options={"verify_aud": False},
         )
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
