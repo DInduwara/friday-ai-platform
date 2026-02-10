@@ -329,5 +329,6 @@ Chosen to allow reuse, learning, and demonstration while keeping attribution.
 
 **Dinuka Induwara Bandara**  
 Software Engineering Intern · AI Developer  
-LinkedIn: https://www.linkedin.com/in/dinuka-induwara
+[LinkedIn](https://www.linkedin.com/in/dinuka-induwara) | [Portfolio](https://dinuka-induwara-portfolio.vercel.app)
+
 
